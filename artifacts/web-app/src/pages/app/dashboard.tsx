@@ -2,12 +2,13 @@ import AppLayout from "@/components/AppLayout";
 import { useGetWalletBalance, useGetPublicAnnouncements } from "@workspace/api-client-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
 import { Link } from "wouter";
 import { Wallet, FileText, Pin, Users, ChevronRight, Send } from "lucide-react";
 import { useAuthContext } from "@/context/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 function fmt(val?: string | null) {
   if (!val) return "0.00";
@@ -55,6 +56,98 @@ function useTodayStats() {
     },
     staleTime: 30_000,
   });
+}
+
+function BannerSlider({ banners }: { banners: { id: string; title: string; imageUrl: string; linkUrl?: string | null }[] }) {
+  const [api, setApi] = useState<CarouselApi>();
+  const [current, setCurrent] = useState(0);
+
+  const onSelect = useCallback((api: CarouselApi) => {
+    if (!api) return;
+    setCurrent(api.selectedScrollSnap());
+  }, []);
+
+  useEffect(() => {
+    if (!api) return;
+    onSelect(api);
+    api.on("select", onSelect);
+    api.on("reInit", onSelect);
+    return () => {
+      api.off("select", onSelect);
+    };
+  }, [api, onSelect]);
+
+  useEffect(() => {
+    if (!api || banners.length <= 1) return;
+    const id = setInterval(() => {
+      if (api.canScrollNext()) {
+        api.scrollNext();
+      } else {
+        api.scrollTo(0);
+      }
+    }, 3500);
+    return () => clearInterval(id);
+  }, [api, banners.length]);
+
+  if (banners.length === 0) return null;
+
+  return (
+    <div className="relative w-full">
+      <Carousel
+        setApi={setApi}
+        opts={{ loop: true, align: "start" }}
+        className="w-full"
+      >
+        <CarouselContent className="-ml-0">
+          {banners.map(banner => (
+            <CarouselItem key={banner.id} className="pl-0">
+              {banner.linkUrl ? (
+                <a
+                  href={banner.linkUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block rounded-2xl overflow-hidden"
+                >
+                  <img
+                    src={banner.imageUrl}
+                    alt={banner.title}
+                    className="w-full h-auto object-cover"
+                    draggable={false}
+                  />
+                </a>
+              ) : (
+                <div className="block rounded-2xl overflow-hidden">
+                  <img
+                    src={banner.imageUrl}
+                    alt={banner.title}
+                    className="w-full h-auto object-cover"
+                    draggable={false}
+                  />
+                </div>
+              )}
+            </CarouselItem>
+          ))}
+        </CarouselContent>
+      </Carousel>
+
+      {banners.length > 1 && (
+        <div className="flex justify-center gap-1.5 mt-2">
+          {banners.map((_, idx) => (
+            <button
+              key={idx}
+              onClick={() => api?.scrollTo(idx)}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                idx === current
+                  ? "bg-primary w-4"
+                  : "bg-muted-foreground/30 w-1.5"
+              }`}
+              aria-label={`Go to slide ${idx + 1}`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -146,53 +239,28 @@ export default function DashboardPage() {
           <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
         </button>
 
-        {/* Telegram Channel Link — from admin settings */}
-        {telegramLink && (
-          <a
-            href={telegramLink}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between p-4 rounded-2xl bg-[#229ED9]/10 border border-[#229ED9]/30 hover:bg-[#229ED9]/20 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-[#229ED9]/20 flex items-center justify-center shrink-0">
-                <Send className="w-5 h-5 text-[#229ED9]" />
-              </div>
-              <div>
-                <p className="font-semibold text-foreground text-sm">Join Our Telegram</p>
-                <p className="text-xs text-muted-foreground">Get updates, offers & support</p>
-              </div>
+        {/* Telegram Channel Link — always visible */}
+        <a
+          href={telegramLink || "#"}
+          target={telegramLink ? "_blank" : "_self"}
+          rel="noreferrer"
+          className="flex items-center justify-between p-4 rounded-2xl bg-[#229ED9]/10 border border-[#229ED9]/30 hover:bg-[#229ED9]/20 transition-colors"
+          onClick={!telegramLink ? (e) => e.preventDefault() : undefined}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-[#229ED9]/20 flex items-center justify-center shrink-0">
+              <Send className="w-5 h-5 text-[#229ED9]" />
             </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-          </a>
-        )}
+            <div>
+              <p className="font-semibold text-foreground text-sm">Join Our Telegram</p>
+              <p className="text-xs text-muted-foreground">Get updates, offers & support</p>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+        </a>
 
-        {/* Dynamic Banners — image only */}
-        {banners.map(banner =>
-          banner.linkUrl ? (
-            <a
-              key={banner.id}
-              href={banner.linkUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="block rounded-2xl overflow-hidden"
-            >
-              <img
-                src={banner.imageUrl}
-                alt={banner.title}
-                className="w-full h-auto object-cover"
-              />
-            </a>
-          ) : (
-            <div key={banner.id} className="block rounded-2xl overflow-hidden">
-              <img
-                src={banner.imageUrl}
-                alt={banner.title}
-                className="w-full h-auto object-cover"
-              />
-            </div>
-          )
-        )}
+        {/* Promotional Banner Slider/Carousel */}
+        <BannerSlider banners={banners} />
 
         {/* Terms & Rules Banner */}
         <Link href="/app/terms">

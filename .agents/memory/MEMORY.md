@@ -1,0 +1,1 @@
+- [MyPay project setup](mypay-setup.md) — stack, seed credentials, route layout, and 4 implemented requirements verified live.

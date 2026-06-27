@@ -6,14 +6,25 @@ import {
   walletsTable,
   adminLogsTable,
   referralsTable,
+  sellUpiAccountsTable,
 } from "@workspace/db";
-import { eq, desc, lt, and, ilike, or } from "drizzle-orm";
+import { eq, desc, lt, and, ilike, or, inArray } from "drizzle-orm";
 import type { AuthenticatedRequest } from "../../middlewares/auth";
 import { lockWallet, unlockWallet } from "../../lib/wallet";
 import { supabaseAdmin } from "../../lib/supabase";
 
 const router: IRouter = Router();
 
+/**
+ * Normalize a mobile search string so country-code variants match the stored 10-digit number.
+ * Examples: "+916003164460" → "6003164460", "916003164460" → "6003164460"
+ */
+function normalizeMobileSearch(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits || raw.trim();
+}
 
 // GET /api/admin/users — list all users
 router.get("/users", async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -34,10 +45,11 @@ router.get("/users", async (req: AuthenticatedRequest, res): Promise<void> => {
 
   const conditions: any[] = [];
   if (search) {
+    const normalized = normalizeMobileSearch(search);
     conditions.push(
       or(
         ilike(profilesTable.name, `%${search}%`),
-        ilike(profilesTable.mobile, `%${search}%`),
+        ilike(profilesTable.mobile, `%${normalized}%`),
         ilike(profilesTable.referralCode, `%${search}%`),
       ),
     );
@@ -75,8 +87,35 @@ router.get("/users", async (req: AuthenticatedRequest, res): Promise<void> => {
   const hasMore = users.length > limit;
   const items = hasMore ? users.slice(0, limit) : users;
 
+  // Batch-fetch sell UPI accounts to avoid LEFT JOIN duplicates when users have multiple UPIs
+  let sellUpiMap: Record<string, { upiId: string; provider: string }> = {};
+  if (items.length > 0) {
+    const userIds = items.map((u) => u.id);
+    const upiRows = await db
+      .select({
+        userId: sellUpiAccountsTable.userId,
+        upiId: sellUpiAccountsTable.upiId,
+        provider: sellUpiAccountsTable.provider,
+      })
+      .from(sellUpiAccountsTable)
+      .where(inArray(sellUpiAccountsTable.userId, userIds));
+
+    for (const row of upiRows) {
+      // Keep first found (most recently-added comes first via table insert order)
+      if (!sellUpiMap[row.userId]) {
+        sellUpiMap[row.userId] = { upiId: row.upiId, provider: row.provider };
+      }
+    }
+  }
+
+  const enriched = items.map((u) => ({
+    ...u,
+    sellUpiId: sellUpiMap[u.id]?.upiId ?? u.sellUpiId ?? null,
+    sellUpiProvider: sellUpiMap[u.id]?.provider ?? null,
+  }));
+
   res.json({
-    users: items,
+    users: enriched,
     hasMore,
     nextCursor: hasMore ? items[items.length - 1]!.createdAt.toISOString() : null,
   });
@@ -106,10 +145,16 @@ router.get("/users/:id", async (req: AuthenticatedRequest, res): Promise<void> =
     .from(referralsTable)
     .where(eq(referralsTable.referrerId, user.id));
 
+  const sellUpiAccounts = await db
+    .select()
+    .from(sellUpiAccountsTable)
+    .where(eq(sellUpiAccountsTable.userId, user.id));
+
   res.json({
     user: {
       ...user,
       wallet,
+      sellUpiAccounts,
       referralStats: {
         total: referralStats.length,
         levelA: referralStats.filter((r) => r.level === "A").length,

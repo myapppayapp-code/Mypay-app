@@ -17,11 +17,9 @@ import {
   useAdminApproveSellRequest,
   useAdminRejectSellRequest,
 } from "@workspace/api-client-react";
-import { getAccessToken } from "@/lib/auth";
+import { adminApi } from "@/lib/admin-api";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-
-const _apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, "") ?? "";
 
 function formatAmount(val?: string | null) {
   if (!val) return "0.00";
@@ -41,19 +39,14 @@ const statusConfig: Record<string, { label: string; cls: string; icon: React.Rea
   rejected: { label: "Rejected", cls: "bg-red-100 text-red-700",        icon: <XCircle className="w-3 h-3" /> },
 };
 
-// User lookup hook
+// User lookup hook — uses admin token via adminApi.getUsers()
 function useAdminSearchUser(mobile: string) {
   return useQuery({
     queryKey: ["admin-user-search", mobile],
-    queryFn: async () => {
-      const token = getAccessToken();
-      const res = await fetch(`${_apiBase}/api/admin/users?search=${encodeURIComponent(mobile)}&limit=1`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Search failed");
-      return data as { users: Array<{ id: string; name: string; mobile: string; inrBalance?: string }> };
-    },
+    queryFn: () =>
+      adminApi.getUsers({ search: mobile, limit: "1" }) as Promise<{
+        users: Array<{ id: string; name: string; mobile: string; inrBalance?: string; sellUpiId?: string | null }>;
+      }>,
     enabled: mobile.length >= 5,
     staleTime: 10_000,
   });
